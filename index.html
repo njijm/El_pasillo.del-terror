@@ -1,0 +1,273 @@
+from pathlib import Path
+
+html = r'''<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>El Pasillo del Terror</title>
+<style>
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:Arial,sans-serif}
+  canvas{display:block}
+  #hud{
+    position:fixed;top:12px;left:12px;z-index:10;color:white;
+    background:rgba(0,0,0,.55);padding:10px 14px;border-radius:10px;
+    font-size:16px;pointer-events:none
+  }
+  #start{
+    position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(circle,#171717 0,#050505 55%,#000 100%);
+    color:white;text-align:center
+  }
+  #panel{max-width:520px;padding:28px}
+  h1{font-size:42px;margin:0 0 12px;text-shadow:0 0 18px #900}
+  p{color:#ccc;line-height:1.5}
+  button{
+    border:0;border-radius:12px;padding:15px 24px;margin:8px;
+    background:#b00000;color:white;font-size:18px;font-weight:bold
+  }
+  #message{
+    position:fixed;inset:0;z-index:30;display:none;align-items:center;justify-content:center;
+    background:rgba(0,0,0,.88);color:white;text-align:center
+  }
+  #message h2{font-size:48px;color:#e00000}
+</style>
+</head>
+<body>
+<div id="hud">🔑 Llaves: <span id="keys">0</span>/3<br>🎯 Encuentra la salida</div>
+
+<div id="start">
+  <div id="panel">
+    <h1>EL PASILLO DEL TERROR</h1>
+    <p>Un monstruo negro de ojos rojos te está buscando.</p>
+    <p>Encuentra las 3 llaves y llega a la puerta de salida.</p>
+    <button id="play">JUGAR</button>
+    <button id="vr" style="display:none">🥽 ENTRAR EN VR</button>
+    <p style="font-size:13px">PC: WASD + mouse · Quest 2: mueve la cabeza y usa los controles Touch.</p>
+  </div>
+</div>
+
+<div id="message">
+  <div>
+    <h2 id="messageTitle"></h2>
+    <p id="messageText"></p>
+    <button onclick="location.reload()">REINTENTAR</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/webxr/VRButton.js"></script>
+<script>
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x020202);
+scene.fog = new THREE.Fog(0x020202, 5, 42);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, .05, 100);
+camera.position.set(0,1.65,12);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const hemi = new THREE.HemisphereLight(0x222222,0x050505,.35);
+scene.add(hemi);
+
+const lamp = new THREE.PointLight(0xff2222,2.2,12);
+lamp.position.set(0,2.7,3);
+scene.add(lamp);
+
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(10,80),
+  new THREE.MeshStandardMaterial({color:0x161616,roughness:1})
+);
+floor.rotation.x=-Math.PI/2;
+floor.position.y=0;
+floor.position.z=-12;
+scene.add(floor);
+
+function wall(x,z){
+  const m=new THREE.Mesh(
+    new THREE.BoxGeometry(.45,3.5,80),
+    new THREE.MeshStandardMaterial({color:0x111111,roughness:1})
+  );
+  m.position.set(x,1.75,-12);
+  scene.add(m);
+}
+wall(-5,0); wall(5,0);
+
+for(let z=8;z>-50;z-=6){
+  const light=new THREE.PointLight(0x663333,1.2,8);
+  light.position.set((Math.random()>.5? -3:3),2.7,z);
+  scene.add(light);
+
+  const ceiling=new THREE.Mesh(
+    new THREE.BoxGeometry(9,.25,1.5),
+    new THREE.MeshStandardMaterial({color:0x0b0b0b})
+  );
+  ceiling.position.set(0,3.4,z);
+  scene.add(ceiling);
+}
+
+const keys=[];
+function makeKey(x,z){
+  const g=new THREE.Group();
+  const ring=new THREE.Mesh(
+    new THREE.TorusGeometry(.16,.045,8,16),
+    new THREE.MeshStandardMaterial({color:0xffcc33,emissive:0x664400})
+  );
+  const stem=new THREE.Mesh(
+    new THREE.BoxGeometry(.07,.32,.07),
+    new THREE.MeshStandardMaterial({color:0xffcc33,emissive:0x664400})
+  );
+  stem.position.y=-.18;
+  g.add(ring,stem);
+  g.position.set(x,1.1,z);
+  scene.add(g);
+  keys.push(g);
+}
+makeKey(-2.5,2);
+makeKey(2.5,-12);
+makeKey(-2,-27);
+
+const exit=new THREE.Mesh(
+  new THREE.BoxGeometry(2.5,3,.3),
+  new THREE.MeshStandardMaterial({color:0x202020,emissive:0x180000})
+);
+exit.position.set(0,1.5,-39);
+scene.add(exit);
+
+const monster=new THREE.Group();
+const body=new THREE.Mesh(
+  new THREE.CapsuleGeometry(.65,1.6,8,16),
+  new THREE.MeshStandardMaterial({color:0x030303})
+);
+body.position.y=1.15;
+monster.add(body);
+for(const x of [-.22,.22]){
+  const eye=new THREE.Mesh(
+    new THREE.SphereGeometry(.09,12,12),
+    new THREE.MeshBasicMaterial({color:0xff0000})
+  );
+  eye.position.set(x,1.7,.58);
+  monster.add(eye);
+}
+monster.position.set(0,0,-25);
+scene.add(monster);
+
+let playing=false, collected=0, dead=false;
+const keysDown={};
+addEventListener('keydown',e=>keysDown[e.key.toLowerCase()]=true);
+addEventListener('keyup',e=>keysDown[e.key.toLowerCase()]=false);
+
+let yaw=0, pitch=0, dragging=false, lastX=0,lastY=0;
+renderer.domElement.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY});
+addEventListener('pointerup',()=>dragging=false);
+addEventListener('pointermove',e=>{
+  if(!dragging || renderer.xr.isPresenting)return;
+  yaw-=(e.clientX-lastX)*.003;
+  pitch-=(e.clientY-lastY)*.003;
+  pitch=Math.max(-1.2,Math.min(1.2,pitch));
+  lastX=e.clientX;lastY=e.clientY;
+});
+
+function collect(){
+  for(let i=keys.length-1;i>=0;i--){
+    if(camera.position.distanceTo(keys[i].position)<1.25){
+      scene.remove(keys[i]);
+      keys.splice(i,1);
+      collected++;
+      document.getElementById('keys').textContent=collected;
+    }
+  }
+}
+
+function win(){
+  dead=true;
+  document.getElementById('messageTitle').textContent='🏆 ¡ESCAPASTE!';
+  document.getElementById('messageText').textContent='Encontraste todas las llaves y saliste del pasillo.';
+  document.getElementById('message').style.display='flex';
+}
+
+function lose(){
+  dead=true;
+  document.getElementById('messageTitle').textContent='👁️ TE ENCONTRÓ';
+  document.getElementById('messageText').textContent='El monstruo llegó hasta ti.';
+  document.getElementById('message').style.display='flex';
+}
+
+function update(dt){
+  if(!playing||dead||renderer.xr.isPresenting)return;
+
+  const speed=dt*3.2;
+  const dir=new THREE.Vector3();
+  if(keysDown['w']||keysDown['arrowup'])dir.z-=1;
+  if(keysDown['s']||keysDown['arrowdown'])dir.z+=1;
+  if(keysDown['a']||keysDown['arrowleft'])dir.x-=1;
+  if(keysDown['d']||keysDown['arrowright'])dir.x+=1;
+  if(dir.length()>0)dir.normalize();
+
+  const forward=new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
+  const right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
+  camera.position.addScaledVector(forward,dir.z*speed);
+  camera.position.addScaledVector(right,dir.x*speed);
+  camera.position.x=Math.max(-4.4,Math.min(4.4,camera.position.x));
+  camera.position.z=Math.min(12,Math.max(-38.5,camera.position.z));
+  camera.rotation.set(pitch,yaw,0,'YXZ');
+
+  collect();
+
+  const toPlayer=new THREE.Vector3().subVectors(camera.position,monster.position);
+  toPlayer.y=0;
+  const dist=toPlayer.length();
+  if(dist>2.2){
+    toPlayer.normalize();
+    monster.position.addScaledVector(toPlayer,dt*1.15);
+  }else lose();
+
+  if(collected===3 && camera.position.z<-37.2)win();
+}
+
+document.getElementById('play').onclick=()=>{
+  playing=true;
+  document.getElementById('start').style.display='none';
+  renderer.domElement.requestPointerLock?.();
+};
+
+if(navigator.xr){
+  navigator.xr.isSessionSupported('immersive-vr').then(ok=>{
+    if(ok) document.getElementById('vr').style.display='inline-block';
+  }).catch(()=>{});
+}
+
+document.getElementById('vr').onclick=()=>{
+  const btn=THREE.VRButton.createButton(renderer);
+  btn.click();
+  playing=true;
+  document.getElementById('start').style.display='none';
+};
+
+let last=performance.now();
+function animate(now){
+  const dt=Math.min(.05,(now-last)/1000);
+  last=now;
+  update(dt);
+  renderer.render(scene,camera);
+}
+renderer.setAnimationLoop(animate);
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
+'''
+
+path = Path("/mnt/data/index.html")
+path.write_text(html, encoding="utf-8")
+print(f"Archivo creado: {path}")
+
